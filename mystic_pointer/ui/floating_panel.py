@@ -529,7 +529,9 @@ class FloatingPanel(QFrame):
         text = self.prompt_input.text().strip()
         if not text:
             return
+        self._run_prompt(text)
 
+    def _run_prompt(self, text: str) -> None:
         images = self.selection_manager.images
         if not images:
             self.response_card.show()

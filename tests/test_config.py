@@ -10,6 +10,7 @@ def test_config_defaults():
     assert cfg.wiggle_enabled is True
     assert cfg.wiggle_sensitivity == 5
     assert cfg.hotkey == "Ctrl+Alt+G"
+    assert cfg.copy_merge_images is False
 
 
 def test_config_save_and_load(tmp_path):
@@ -19,6 +20,7 @@ def test_config_save_and_load(tmp_path):
         wiggle_sensitivity=8,
         hotkey="Super+G",
         gemini_api_key="secret-key",
+        copy_merge_images=True,
     )
     cfg.save(path)
 
@@ -27,3 +29,4 @@ def test_config_save_and_load(tmp_path):
     assert loaded.wiggle_sensitivity == 8
     assert loaded.hotkey == "Super+G"
     assert loaded.gemini_api_key == "secret-key"
+    assert loaded.copy_merge_images is True

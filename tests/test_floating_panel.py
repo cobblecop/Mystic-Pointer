@@ -132,15 +132,18 @@ def test_suggestion_chips_match_the_number_of_selections() -> None:
             return texts
 
         assert "Summarize" in chips()
+        assert "Extract text" in chips()
 
         manager.add_selection(QRect(10, 10, 40, 30), image, screen)
         manager.add_selection(QRect(60, 10, 40, 30), image, screen)
         assert "Summarize both" in chips()
         assert "Summarize all" not in chips()
+        assert "Extract text" in chips()
 
         manager.add_selection(QRect(110, 10, 40, 30), image, screen)
         assert "Summarize all" in chips()
         assert "Summarize both" not in chips()
+        assert "Extract text" in chips()
     finally:
         panel.deleteLater()
 

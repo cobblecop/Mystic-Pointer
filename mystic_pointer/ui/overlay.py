@@ -20,12 +20,14 @@ import time
 
 from PySide6.QtCore import (
     QEasingCurve,
+    QMimeData,
     QPoint,
     QRect,
     QRectF,
     QSize,
     Qt,
     QTimer,
+    QUrl,
     QVariantAnimation,
     Signal,
 )
@@ -33,6 +35,7 @@ from PySide6.QtGui import (
     QColor,
     QFont,
     QFontMetrics,
+    QGuiApplication,
     QKeyEvent,
     QLinearGradient,
     QMouseEvent,
@@ -54,6 +57,12 @@ from mystic_pointer.core.screen_capture import (
     is_wayland_session,
     pil_to_pixmap,
 )
+from mystic_pointer.core.selection_actions import (
+    compose_selection_image,
+    save_clipboard_images,
+    save_selection_images,
+)
+from mystic_pointer.ui.action_bar import SelectionActionBar, choose_action_bar_position
 from mystic_pointer.ui.floating_panel import FloatingPanel
 from mystic_pointer.ui.selection import SelectionManager
 from mystic_pointer.ui.style import ACCENT
@@ -135,6 +144,9 @@ class MysticPointerOverlay(QWidget):
         self._positioning_panel = False
         self._is_closing = False
 
+        # One compact action pill shared by every selected area.
+        self.action_bar: SelectionActionBar | None = None
+
         # Activation reveal.  The window is mapped at its final size while it
         # is still fully transparent, so the compositor's open animation is
         # invisible.  The dim layer fades in over the live desktop once the
@@ -155,6 +167,7 @@ class MysticPointerOverlay(QWidget):
         self._map_guard_ms = _MAP_ANIMATION_GUARD_MS if is_gnome_session() else 0
 
         self.selection_manager.adding_content_changed.connect(self._on_adding_content_changed)
+        self.selection_manager.selection_changed.connect(self._on_selection_changed_actions)
 
     # --- Activation ---
 
@@ -177,6 +190,7 @@ class MysticPointerOverlay(QWidget):
         # The first layout of the panel is surprisingly expensive (QSS + font
         # metrics).  Do it while the capture is in flight.
         self._ensure_panel()
+        self._ensure_action_bar()
         if self.panel is not None:
             self._panel_height_hint = self.panel.sizeHint().height()
 
@@ -353,6 +367,16 @@ class MysticPointerOverlay(QWidget):
         self.panel.close_requested.connect(self.dismiss)
         self.panel.panel_resized.connect(self._on_panel_resized)
 
+    def _ensure_action_bar(self) -> None:
+        if self.action_bar is not None:
+            return
+        bar = SelectionActionBar(self)
+        bar.hide()
+        bar.screenshot_requested.connect(self._take_selection_screenshots)
+        bar.copy_requested.connect(self._copy_selections)
+        bar.resized.connect(self._position_action_bar)
+        self.action_bar = bar
+
     def dismiss(self) -> None:
         """Exit Mystic Pointer completely, fading the dim layer out first."""
         if self._is_closing:
@@ -367,6 +391,8 @@ class MysticPointerOverlay(QWidget):
         self.hovered_rect = None
         if self.panel is not None:
             self.panel.hide()
+        if self.action_bar is not None:
+            self.action_bar.hide()
         # A visible dim layer fades away instead of vanishing in one frame;
         # an overlay that was still fully transparent closes immediately.
         if self._active and self._reveal > 0.01:
@@ -435,6 +461,13 @@ class MysticPointerOverlay(QWidget):
                 if self.hovered_rect is not None
                 else Qt.CursorShape.ArrowCursor
             )
+        if self.action_bar is not None:
+            if adding:
+                # The add-area hint occupies the top of the screen; hide the
+                # pill so the two surfaces cannot collide.
+                self.action_bar.hide()
+            elif self.selection_manager.items:
+                self._on_selection_changed_actions()
         self.update()
 
     def _get_current_drag_rect(self) -> QRect:
@@ -507,6 +540,7 @@ class MysticPointerOverlay(QWidget):
             self._position_panel_near(self._panel_anchor)
         else:
             self._position_panel_initial()
+        self._position_action_bar()
 
     def _clamp_panel_position(self) -> None:
         """Keep a user-positioned panel fully inside the overlay."""
@@ -518,6 +552,125 @@ class MysticPointerOverlay(QWidget):
         target_y = max(20, min(self.panel.y(), max_y))
         if target_x != self.panel.x() or target_y != self.panel.y():
             self.panel.move(target_x, target_y)
+
+    # --- Selection action bar ---
+
+    def _on_selection_changed_actions(self) -> None:
+        """Keep one action pill in sync with every selected area."""
+        if self._is_closing:
+            return
+        if not self.selection_manager.items:
+            if self.action_bar is not None:
+                self.action_bar.hide()
+            return
+
+        self._ensure_action_bar()
+        bar = self.action_bar
+        if bar is None:
+            return
+        # ``show()`` also works while the overlay itself is hidden in tests;
+        # positioning uses ``isHidden`` rather than ``isVisible`` for that
+        # reason.
+        bar.show()
+        bar.adjustSize()
+        self._position_action_bar()
+        bar.raise_()
+
+    def _selection_union_local(self) -> QRect | None:
+        """Bounding rectangle of all selections in overlay coordinates."""
+        if not self.selection_manager.items:
+            return None
+        rects = [self._to_local(item.rect) for item in self.selection_manager.items]
+        union = QRect(rects[0])
+        for rect in rects[1:]:
+            union = union.united(rect)
+        return union
+
+    def _position_action_bar(self, *_args: object) -> None:
+        """Place the action pill next to the selection union, clear of the panel."""
+        bar = self.action_bar
+        if bar is None or bar.isHidden():
+            return
+        anchor = self._selection_union_local()
+        if anchor is None:
+            bar.hide()
+            return
+
+        bar.adjustSize()
+        obstacles: list[QRect] = []
+        if self.panel is not None and self.panel.isVisible():
+            obstacles.append(self.panel.geometry())
+        position = choose_action_bar_position(anchor, bar.size(), self.rect(), obstacles)
+        bar.move(position)
+        bar.raise_()
+
+    def _show_action_status(self, text: str) -> None:
+        if self.action_bar is None:
+            return
+        self.action_bar.show_status(text)
+        self._position_action_bar()
+
+    def _take_selection_screenshots(self) -> None:
+        """Save every selected area as its own PNG."""
+        images = self.selection_manager.images
+        if not images:
+            return
+        try:
+            paths = save_selection_images(images)
+        except Exception as exc:
+            self._show_action_status(f"Could not save: {exc}")
+            return
+        if not paths:
+            self._show_action_status("Nothing to save")
+            return
+        if len(paths) == 1:
+            self._show_action_status("Screenshot saved")
+        else:
+            self._show_action_status(f"Saved {len(paths)} screenshots")
+        if self.action_bar is not None:
+            self.action_bar.setToolTip(f"Saved to {paths[0].parent}")
+
+    def _copy_selections(self) -> None:
+        """Copy every selected area, separately unless merging is enabled."""
+        images = self.selection_manager.images
+        if not images:
+            return
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is None:
+            self._show_action_status("Clipboard unavailable")
+            return
+
+        count = len(images)
+        if count == 1 or self.config.copy_merge_images:
+            composite = compose_selection_image(images)
+            if composite is None:
+                self._show_action_status("Nothing to copy")
+                return
+            clipboard.setPixmap(pil_to_pixmap(composite))
+            if count == 1:
+                self._show_action_status("Copied 1 area")
+            else:
+                self._show_action_status(f"Copied {count} areas as one image")
+            return
+
+        # A clipboard holds one image item, so separate selections are exposed
+        # as a file list. Apps that accept pasted files receive each area.
+        try:
+            paths = save_clipboard_images(images)
+        except Exception as exc:
+            self._show_action_status(f"Could not copy: {exc}")
+            return
+        if not paths:
+            self._show_action_status("Nothing to copy")
+            return
+
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(path)) for path in paths])
+        mime.setText("\n".join(str(path) for path in paths))
+        clipboard.setMimeData(mime)
+        self._show_action_status(f"Copied {count} images separately")
+        if self.action_bar is not None:
+            self.action_bar.setToolTip(f"Copied as separate files from {paths[0].parent}")
 
     # --- Paint Events ---
 
@@ -826,6 +979,7 @@ class MysticPointerOverlay(QWidget):
                 )
                 self._position_panel_near(drag_rect)
 
+            self._position_action_bar()
             self.update()
 
     def _to_local(self, rect: QRect) -> QRect:

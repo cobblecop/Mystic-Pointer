@@ -325,6 +325,45 @@ QToolTip {
 """
 
 
+SELECTION_ACTION_BAR_STYLE = """
+QFrame#SelectionActionBar {
+    background-color: rgba(36, 36, 36, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 10px;
+}
+
+QPushButton#ActionButton {
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    color: #f6f5f4;
+    font-family: 'Cantarell', 'Inter', 'Noto Sans', 'Segoe UI', 'DejaVu Sans', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 9px;
+}
+
+QPushButton#ActionButton:hover {
+    background: rgba(255, 255, 255, 0.10);
+}
+
+QPushButton#ActionButton:pressed {
+    background: rgba(53, 132, 228, 0.38);
+}
+
+QPushButton#ActionButton:focus {
+    border: none;
+}
+
+QLabel#ActionStatus {
+    color: #b5b3b0;
+    font-family: 'Cantarell', 'Inter', 'Noto Sans', 'Segoe UI', 'DejaVu Sans', sans-serif;
+    font-size: 11px;
+    padding: 0 5px;
+}
+"""
+
+
 RESPONSE_DOCUMENT_STYLE = """
 p {
     margin-top: 0px;

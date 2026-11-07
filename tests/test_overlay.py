@@ -3,27 +3,38 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import cast
 
 from PIL import Image
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QImage, QKeyEvent
+from PySide6.QtGui import QGuiApplication, QImage, QKeyEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from mystic_pointer.ai.mock import MockProvider
 from mystic_pointer.config import AppConfig
+from mystic_pointer.core import selection_actions
 from mystic_pointer.core.capture_service import CaptureService
 from mystic_pointer.core.screen_capture import ScreenCaptureResult
+from mystic_pointer.ui.action_bar import SelectionActionBar
 from mystic_pointer.ui.overlay import MysticPointerOverlay
 
 _app = cast(QApplication, QApplication.instance() or QApplication([]))
 
 
-def _make_overlay() -> MysticPointerOverlay:
+def _make_overlay(
+    provider: MockProvider | None = None,
+    config: AppConfig | None = None,
+) -> MysticPointerOverlay:
     screen = _app.primaryScreen()
     assert screen is not None
-    return MysticPointerOverlay(AppConfig(), MockProvider(), screen, CaptureService())
+    return MysticPointerOverlay(
+        config or AppConfig(),
+        provider or MockProvider(),
+        screen,
+        CaptureService(),
+    )
 
 
 def test_prompt_panel_is_hidden_during_activation() -> None:
@@ -268,3 +279,142 @@ def test_dismiss_fades_the_dim_layer_before_closing() -> None:
 
     assert closed == [True]
     assert overlay._reveal < 0.1
+
+
+def _prepare_action_overlay(overlay: MysticPointerOverlay) -> None:
+    overlay._work_area_mode = False
+    overlay.screen_geometry = QRect(0, 0, 400, 300)
+    overlay._origin = QPoint(0, 0)
+    overlay.resize(400, 300)
+    overlay._active = True
+    overlay._reveal = 1.0
+
+
+def _add_action_area(overlay: MysticPointerOverlay, rect: QRect) -> None:
+    image = Image.new("RGB", (400, 300), (120, 140, 160))
+    overlay.capture_result = ScreenCaptureResult(
+        image=image,
+        screen_geometry=overlay.screen_geometry,
+    )
+    overlay._build_frame_pixmap()
+    overlay.selection_manager.add_selection(rect, image, overlay.screen_geometry)
+
+
+def test_action_bar_stays_hidden_until_something_is_selected() -> None:
+    overlay = _make_overlay()
+    overlay._ensure_action_bar()
+
+    assert overlay.action_bar is not None
+    assert overlay.action_bar.isHidden()
+    overlay.deleteLater()
+
+
+def test_multiple_selections_share_one_action_bar() -> None:
+    overlay = _make_overlay()
+    _prepare_action_overlay(overlay)
+    try:
+        _add_action_area(overlay, QRect(40, 40, 80, 60))
+        _add_action_area(overlay, QRect(200, 120, 70, 50))
+
+        assert overlay.action_bar is not None
+        assert not overlay.action_bar.isHidden()
+        assert len(overlay.findChildren(SelectionActionBar)) == 1
+        assert overlay._selection_union_local() == QRect(40, 40, 230, 130)
+    finally:
+        overlay.deleteLater()
+
+
+def test_action_bar_hides_while_adding_another_area() -> None:
+    overlay = _make_overlay()
+    _prepare_action_overlay(overlay)
+    try:
+        _add_action_area(overlay, QRect(40, 40, 80, 60))
+        assert overlay.action_bar is not None
+        assert not overlay.action_bar.isHidden()
+
+        overlay.selection_manager.set_adding_content(True)
+        assert overlay.action_bar.isHidden()
+
+        overlay.selection_manager.set_adding_content(False)
+        assert not overlay.action_bar.isHidden()
+    finally:
+        overlay.deleteLater()
+
+
+def test_action_bar_sits_next_to_the_selection_union() -> None:
+    overlay = _make_overlay()
+    _prepare_action_overlay(overlay)
+    try:
+        _add_action_area(overlay, QRect(150, 100, 100, 80))
+
+        assert overlay.action_bar is not None
+        bar_rect = overlay.action_bar.geometry()
+        selection_rect = QRect(150, 100, 100, 80)
+        assert not bar_rect.intersects(selection_rect)
+        assert bar_rect.bottom() < selection_rect.top()
+    finally:
+        overlay.deleteLater()
+
+
+def test_screenshot_action_saves_every_selected_area(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(selection_actions, "default_screenshot_directory", lambda: tmp_path)
+    overlay = _make_overlay()
+    _prepare_action_overlay(overlay)
+    try:
+        _add_action_area(overlay, QRect(40, 40, 80, 60))
+        _add_action_area(overlay, QRect(200, 120, 70, 50))
+
+        overlay._take_selection_screenshots()
+
+        assert len(list(tmp_path.glob("*.png"))) == 2
+        assert overlay.action_bar is not None
+        assert overlay.action_bar.status_label.text() == "Saved 2 screenshots"
+    finally:
+        overlay.deleteLater()
+
+
+def test_copy_action_places_each_area_on_the_clipboard_separately(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(selection_actions, "clipboard_image_directory", lambda: tmp_path)
+    overlay = _make_overlay()
+    _prepare_action_overlay(overlay)
+    try:
+        _add_action_area(overlay, QRect(40, 40, 80, 60))
+        _add_action_area(overlay, QRect(200, 120, 70, 50))
+
+        overlay._copy_selections()
+
+        clipboard = QGuiApplication.clipboard()
+        assert clipboard is not None
+        mime = clipboard.mimeData()
+        assert mime is not None
+        paths = [Path(url.toLocalFile()) for url in mime.urls()]
+        assert len(paths) == 2
+        assert all(path.exists() for path in paths)
+        assert Image.open(paths[0]).size == (80, 60)
+        assert Image.open(paths[1]).size == (70, 50)
+        assert overlay.action_bar is not None
+        assert overlay.action_bar.status_label.text() == "Copied 2 images separately"
+    finally:
+        overlay.deleteLater()
+
+
+def test_copy_action_can_merge_areas_into_one_image(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(selection_actions, "clipboard_image_directory", lambda: tmp_path)
+    overlay = _make_overlay(config=AppConfig(copy_merge_images=True))
+    _prepare_action_overlay(overlay)
+    try:
+        _add_action_area(overlay, QRect(40, 40, 80, 60))
+        _add_action_area(overlay, QRect(200, 120, 70, 50))
+
+        overlay._copy_selections()
+
+        clipboard = QGuiApplication.clipboard()
+        assert clipboard is not None
+        image = clipboard.image()
+        assert not image.isNull()
+        assert image.width() == 80
+        assert image.height() == 60 + 8 + 50
+        assert overlay.action_bar is not None
+        assert overlay.action_bar.status_label.text() == "Copied 2 areas as one image"
+    finally:
+        overlay.deleteLater()

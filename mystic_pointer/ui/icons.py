@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap, QTransform
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QTransform
 
 from mystic_pointer.ui.style import ACCENT
 
@@ -61,6 +61,46 @@ def make_pointer_pixmap(
 def make_pointer_icon(size: int = 18, color: str = "#f6f5f4") -> QPixmap:
     """Transparent pointer glyph used in the floating panel header."""
     return make_pointer_pixmap(size, color=color)
+
+
+def _draw_action_glyph(painter: QPainter, kind: str) -> None:
+    """Draw one 24x24 outline glyph for the selection action bar."""
+    if kind == "screenshot":
+        # A small camera: body, viewfinder hump and lens.
+        painter.drawRoundedRect(QRectF(3.5, 7.0, 17.0, 12.5), 2.8, 2.8)
+        painter.drawPolyline(
+            [
+                QPointF(8.5, 7.0),
+                QPointF(9.6, 4.6),
+                QPointF(14.4, 4.6),
+                QPointF(15.5, 7.0),
+            ]
+        )
+        painter.drawEllipse(QPointF(12.0, 13.25), 3.4, 3.4)
+        return
+
+    if kind == "copy":
+        # Two offset sheets read as "copy" at small sizes.
+        painter.drawRoundedRect(QRectF(8.0, 8.0, 11.5, 12.0), 2.2, 2.2)
+        painter.drawRoundedRect(QRectF(4.5, 4.0, 11.5, 12.0), 2.2, 2.2)
+
+
+def make_action_pixmap(kind: str, size: int = 16, color: str = "#f6f5f4") -> QPixmap:
+    """Render one of the action-bar glyphs at the requested pixel size."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.scale(size / 24.0, size / 24.0)
+    pen = QPen(QColor(color), 1.7)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    _draw_action_glyph(painter, kind)
+    painter.end()
+    return pixmap
 
 
 def create_tray_icon_pixmap(enabled: bool = True) -> QPixmap:

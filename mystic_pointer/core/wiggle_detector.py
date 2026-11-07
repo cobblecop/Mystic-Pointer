@@ -1,7 +1,7 @@
 """Mouse wiggle gesture detector for Mystic Pointer.
 
 Detects when the user quickly moves the cursor left and right for a few moments,
-matching the Chromebook Plus activation gesture.
+matching the Magic Pointer gesture on Googlebooks.
 """
 
 from __future__ import annotations

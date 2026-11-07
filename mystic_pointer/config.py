@@ -37,6 +37,7 @@ class AppConfig:
     wiggle_sensitivity: int = 5  # 1 (low) to 10 (high)
     hotkey: str = "Ctrl+Alt+G"
     smart_detection: bool = True
+    copy_merge_images: bool = False
     dim_opacity: float = 0.45
     accent_color: str = "#3584e4"  # GNOME blue accent
     custom_suggestions: list[str] = field(

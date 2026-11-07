@@ -457,6 +457,15 @@ class SettingsDialog(QDialog):
             self.smart_detect_cb,
         )
 
+        self.copy_merge_cb = ToggleSwitch()
+        self.copy_merge_cb.setAccessibleName("Merge copied images")
+        self._add_row(
+            interface_card,
+            "Merge copied images",
+            "Copy selected areas as one stacked image instead of separate images.",
+            self.copy_merge_cb,
+        )
+
         self.opacity_val_label = QLabel("45%")
         self.opacity_val_label.setObjectName("ValueLabel")
         self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
@@ -638,6 +647,7 @@ class SettingsDialog(QDialog):
         self.sens_val_label.setText(str(self.config.wiggle_sensitivity))
         self.hotkey_input.setText(self.config.hotkey)
         self.smart_detect_cb.setChecked(self.config.smart_detection)
+        self.copy_merge_cb.setChecked(self.config.copy_merge_images)
         self.opacity_slider.setValue(int(self.config.dim_opacity * 100))
         self.opacity_val_label.setText(f"{int(self.config.dim_opacity * 100)}%")
 
@@ -983,6 +993,7 @@ class SettingsDialog(QDialog):
         self.config.wiggle_sensitivity = self.sens_slider.value()
         self.config.hotkey = self.hotkey_input.text().strip()
         self.config.smart_detection = self.smart_detect_cb.isChecked()
+        self.config.copy_merge_images = self.copy_merge_cb.isChecked()
         self.config.dim_opacity = self.opacity_slider.value() / 100.0
 
         self.config.provider = self.provider_combo.currentData()
